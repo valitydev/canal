@@ -3,7 +3,7 @@
               {vsn,"0.4.2"},
               {registered,[]},
               {mod,{canal_app,[]}},
-              {applications,[kernel,stdlib,inets,jiffy,ssl]},
+              {applications,[kernel,stdlib,inets,jsone,ssl]},
               {env,[]},
               {modules,[]},
               {licenses,["Apache 2.0"]},
