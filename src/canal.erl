@@ -348,6 +348,9 @@ handle_write_response({RequestId, Response}, State) ->
             case ?DECODE(Body) of
                 #{<<"errors">> := Errors} ->
                     {error, {StatusCode, Errors}};
+                #{<<"warnings">> := Warnings} when is_list(Warnings) ->
+                    canal_utils:warning_msg("write operation warnings: ~p", [Warnings]),
+                    ok;
                 _ ->
                     ok
             end
