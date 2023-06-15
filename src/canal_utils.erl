@@ -31,6 +31,9 @@ error_msg(Format, Args) ->
 getopt(credentials) ->
     ?GET_ENV(credentials, undefined);
 
+getopt(engine) ->
+    ?GET_ENV(engine, kvv1);
+
 getopt(timeout) ->
     getopt2([
         os:getenv("CANAL_REQUEST_TIMEOUT"),

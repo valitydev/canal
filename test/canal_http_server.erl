@@ -3,7 +3,7 @@
 -include("canal_test.hrl").
 
 -export([
-    start/0,
+    start/1,
     stop/0
 ]).
 
@@ -12,10 +12,12 @@
 ]).
 
 
-start() ->
+-spec start(canal:engine()) -> {ok, _}.
+
+start(Engine) ->
     application:ensure_all_started(cowboy),
     Dispatch = cowboy_router:compile([{'_', [
-        {"/v1/:op/[:rest/[...]]", ?MODULE, #{}}
+        {"/v1/:op/[:rest/[:tail]]", ?MODULE, #{engine => Engine}}
     ]}]),
     {ok, _} = cowboy:start_clear(?MODULE, [{port, 8200}], #{
         env => #{dispatch => Dispatch},
@@ -78,21 +80,44 @@ do_handle_auth(Req, State) ->
 
 
 handle_read_req(Req, State) ->
-    Key = cowboy_req:binding(rest, Req),
+    Key = parse_key(Req, State),
     case ets:lookup(?TABLE, Key) of
         [] ->
             Body = ?ENCODE(#{errors => []}),
             reply(404, Body, Req, State);
         [{_, Val}] ->
-            reply(200, ?ENCODE(#{data => Val}), Req, State)
+            Result = build_result(Val, State),
+            reply(200, ?ENCODE(Result), Req, State)
     end.
 
 
-handle_write_req(Req, State) ->
-    Key = cowboy_req:binding(rest, Req),
+handle_write_req(Req, #{engine := kvv2} = State) ->
+    Key = parse_key(Req, State),
+    {ok, Body, Req2} = read_body(Req, <<"">>),
+    #{<<"data">> := Value} = ?DECODE(Body),
+    ets:insert(?TABLE, {Key, Value}),
+    reply(200, ?ENCODE(#{metadata => #{}}), Req2, State);
+
+handle_write_req(Req, #{engine := kvv1} = State) ->
+    Key = parse_key(Req, State),
     {ok, Value, Req2} = read_body(Req, <<"">>),
     ets:insert(?TABLE, {Key, ?DECODE(Value)}),
     reply(204, <<"">>, Req2, State).
+
+
+parse_key(Req, #{engine := kvv2}) ->
+    <<"data">> = cowboy_req:binding(rest, Req),
+    cowboy_req:binding(tail, Req);
+
+parse_key(Req, #{engine := kvv1}) ->
+    cowboy_req:binding(rest, Req).
+
+
+build_result(Value, #{engine := kvv2}) ->
+    #{data => #{data => Value}, metadata => #{}};
+
+build_result(Value, #{engine := kvv1}) ->
+    #{data => Value}.
 
 
 read_body(Req0, Acc) ->

@@ -1,5 +1,9 @@
 -include("canal_defaults.hrl").
 
+
+-define(CONTENT_TYPE_JSON, "application/json").
+
+
 % macros
 
 -define(APP, canal).

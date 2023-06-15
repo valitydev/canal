@@ -7,7 +7,7 @@
 %% runners
 canal_test_() ->
     {setup,
-        fun () -> setup() end,
+        fun () -> setup(kvv1) end,
         fun (_) -> cleanup() end,
     [
         fun auth_approle_subtest/0,
@@ -15,6 +15,15 @@ canal_test_() ->
         fun read_subtest/0,
         fun write_subtest/0,
         fun cache_subtest/0
+    ]}.
+
+canal_kvv2_test_() ->
+    {setup,
+        fun () -> setup(kvv2) end,
+        fun (_) -> cleanup() end,
+    [
+        fun read_subtest/0,
+        fun write_subtest/0
     ]}.
 
 %% tests
@@ -56,8 +65,9 @@ cleanup() ->
     canal_http_server:stop().
 
 
-setup() ->
+setup(Engine) ->
     ets:new(?TABLE, [ordered_set, named_table, public]),
-    {ok, _} = canal_http_server:start(),
+    {ok, _} = canal_http_server:start(Engine),
+    application:set_env(canal, engine, Engine),
     application:set_env(canal, url, <<"http://127.0.0.1:8200">>),
     canal_app:start().

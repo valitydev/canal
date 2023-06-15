@@ -22,6 +22,10 @@
     terminate/2
 ]).
 
+-export_type([secret_engine/0,
+              secret_key/0,
+              secret_value/0]).
+
 -record(auth, {
     payload   = undefined          :: {string(), binary()} | undefined,
     timestamp = erlang:timestamp() :: erlang:timestamp(),
@@ -31,17 +35,22 @@
 
 -type auth() :: #auth{}.
 
+
+-type secret_engine() :: kvv1 | kvv2.
+-type secret_key() :: binary().
+-type secret_value() :: term().
+
+
 -record(state, {
-    auth            = undefined                   :: auth() | undefined,
-    cache           = #{}                         :: #{binary() => binary()},
-    request_timeout = undefined                   :: non_neg_integer(),
-    requests        = #{}                         :: #{req_id() => req()},
-    url             = undefined                   :: binary()
+    auth            = undefined :: auth() | undefined,
+    cache           = #{}       :: #{secret_key() => secret_value()},
+    request_timeout = undefined :: non_neg_integer(),
+    requests        = #{}       :: #{req_id() => req()},
+    url             = undefined :: binary(),
+    engine          = kvv1      :: secret_engine()
 }).
 
 -type state() :: #state{}.
-
--define(JSON, "application/json").
 
 
 %% API
@@ -61,7 +70,7 @@ auth(Creds = {kubernetes, _Role, _Jwt}) ->
     gen_server:call(?MODULE, {auth, Creds}).
 
 
--spec read(binary()) -> {ok, term()} | {error, term()}.
+-spec read(secret_key()) -> {ok, secret_value()} | {error, term()}.
 
 read(Key) ->
     gen_server:call(?MODULE, {read, Key}).
@@ -79,10 +88,10 @@ start_link() ->
     gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
 
 
--spec write(iodata(), term()) -> ok | {error, term()}.
+-spec write(secret_key(), secret_value()) -> ok | {error, term()}.
 
 write(Key, Val) ->
-    Body = ?ENCODE(#{<<"value">> => Val}),
+    Body = #{<<"value">> => Val},
     gen_server:call(?MODULE, {write, Key, Body}).
 
 
@@ -109,21 +118,19 @@ handle_call({auth, Creds}, _From, State) ->
 
 
 handle_call({read, Key}, From, State) ->
-    Headers = headers(State),
-    Url = url(State, ["/v1/secret/", Key]),
-    {Opts, HttpOpts} = opts(async, req_timeout(State)),
+    EngineParams = make_engine_params(State),
+    Request = canal_secret_engine:make_read_request(Key, EngineParams),
 
-    Request = {Url, Headers},
+    {Opts, HttpOpts} = opts(async, req_timeout(State)),
     {ok, ReqId} = httpc:request(get, Request, HttpOpts, Opts),
 
     {noreply, add_request(ReqId, {From, read, Key}, State)};
 
-handle_call({write, Key, Body}, From, State) ->
-    Headers = headers(State),
-    Url = url(State, ["/v1/secret/", Key]),
-    {Opts, HttpOpts} = opts(async, req_timeout(State)),
+handle_call({write, Key, Value}, From, State) ->
+    EngineParams = make_engine_params(State),
+    Request = canal_secret_engine:make_write_request(Key, Value, EngineParams),
 
-    Request = {Url, Headers, ?JSON, Body},
+    {Opts, HttpOpts} = opts(async, req_timeout(State)),
     {ok, ReqId} = httpc:request(post, Request, HttpOpts, Opts),
 
     {noreply, add_request(ReqId, {From, write, Key}, State)}.
@@ -201,6 +208,7 @@ handle_info(_Req, State) ->
 init(_) ->
     Url = ?GET_OPT(url),
     Timeout = ?GET_OPT(timeout),
+    Engine = ?GET_OPT(engine),
 
     case ?GET_OPT(token) of
         undefined ->
@@ -218,7 +226,8 @@ init(_) ->
 
     State = #state{
         url = Url,
-        request_timeout = Timeout
+        request_timeout = Timeout,
+        engine = Engine
     },
 
     {ok, State}.
@@ -251,7 +260,7 @@ do_auth({Url, Body}, State) ->
 do_auth2(Url, Body, Timeout) ->
     {Opts, HttpOpts} = opts(sync, Timeout),
 
-    Request = {Url, [], ?JSON, Body},
+    Request = {Url, [], ?CONTENT_TYPE_JSON, Body},
     {ok, {{_NewVersion, StatusCode, _Status}, _RespHeaders, RespBody}} =
         httpc:request(post, Request, HttpOpts, Opts),
 
@@ -308,17 +317,20 @@ do_lookup2(Token, Body, State) ->
 
 
 handle_read_response(
-        {RequestId, {{_, StatusCode, _}, _, Reply}},
+        {RequestId, {{_, _StatusCode, _}, _, _Reply} = Response},
         State = #state{cache = Cache, requests = Requests}
     ) ->
-
     #{RequestId := {From, read, Key}} = Requests,
-    Reply2 = ?DECODE(Reply),
-    {Ret, State2} = case Reply2 of
-        #{<<"data">> := Data} ->
+    EngineParams = make_engine_params(State),
+    HandledResponse = canal_secret_engine:handle_read_request(
+        Response,
+        EngineParams
+    ),
+    {Ret, State2} = case HandledResponse of
+        {ok, Data} ->
             {{ok, Data}, State#state{cache = Cache#{Key => Data}}};
-        #{<<"errors">> := Err} ->
-            {{error, {StatusCode, Err}}, State}
+        {error, {StatusCode, Errors}} ->
+            {{error, {StatusCode, Errors}}, State}
     end,
     gen_server:reply(From, Ret),
     {noreply, del_request(RequestId, State2)};
@@ -341,19 +353,15 @@ handle_read_response(
 
 handle_write_response({RequestId, Response}, State) ->
     From = req_origin(RequestId, State),
-    Reply = case Response of
-        {{_, 204, _}, _, _} ->
-            ok;
-        {{_, StatusCode, _}, _, Body} ->
-            case ?DECODE(Body) of
-                #{<<"errors">> := Errors} ->
-                    {error, {StatusCode, Errors}};
-                #{<<"warnings">> := Warnings} when is_list(Warnings) ->
-                    canal_utils:warning_msg("write operation warnings: ~p", [Warnings]),
-                    ok;
-                _ ->
-                    ok
-            end
+    EngineParams = make_engine_params(State),
+    HandledResponse = canal_secret_engine:handle_write_request(
+        Response,
+        EngineParams
+    ),
+
+    Reply = case HandledResponse of
+        ok -> ok;
+        {error, Error} -> {error, Error}
     end,
 
     gen_server:reply(From, Reply),
@@ -473,3 +481,10 @@ update_auth(State, Data, Payload) ->
 
 url(#state{url = BaseUrl}, IOList) ->
     binary_to_list(iolist_to_binary([BaseUrl | IOList])).
+
+make_engine_params(#state{engine = Engine, url = Url} = State) ->
+    #{
+        engine => Engine,
+        url => Url,
+        headers => headers(State)
+    }.
