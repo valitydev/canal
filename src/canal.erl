@@ -33,21 +33,19 @@
     ttl       = undefined          :: non_neg_integer() | undefined
 }).
 
--type auth() :: #auth{}.
-
-
 -type secret_engine() :: kvv1 | kvv2.
 -type secret_key() :: binary().
 -type secret_value() :: term().
 
+-type auth() :: #auth{}.
 
 -record(state, {
-    auth            = undefined :: auth() | undefined,
-    cache           = #{}       :: #{secret_key() => secret_value()},
-    request_timeout = undefined :: non_neg_integer(),
-    requests        = #{}       :: #{req_id() => req()},
-    url             = undefined :: binary(),
-    engine          = kvv1      :: secret_engine()
+    auth            = undefined                   :: auth() | undefined,
+    cache           = #{}                         :: #{secret_key() => secret_value()},
+    request_timeout = undefined                   :: non_neg_integer(),
+    requests        = #{}                         :: #{req_id() => req()},
+    url             = undefined                   :: binary(),
+    engine          = kvv1                        :: secret_engine()
 }).
 
 -type state() :: #state{}.
