@@ -15,7 +15,7 @@
 ) -> canal_secret_engine:httpc_request().
 make_read_request(Key, Params) ->
     PrefixPath = ?GET_ENV(kvv2_secret_mount_path, "/secret/data/"),
-    {url(Params, ["/v1" ++ PrefixPath, Key]), headers(Params)}.
+    {url(Params, ["/v1", PrefixPath, Key]), headers(Params)}.
 
 -spec make_write_request(
     canal:secret_key(),
@@ -24,7 +24,7 @@ make_read_request(Key, Params) ->
 ) -> canal_secret_engine:httpc_request().
 make_write_request(Key, Value, Params) ->
     PrefixPath = ?GET_ENV(kvv2_secret_mount_path, "/secret/data/"),
-    {url(Params, ["/v1" ++ PrefixPath, Key]),
+    {url(Params, ["/v1", PrefixPath, Key]),
      headers(Params),
      ?CONTENT_TYPE_JSON,
      ?ENCODE(#{data => Value})}.
