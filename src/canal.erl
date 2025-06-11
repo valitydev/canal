@@ -408,7 +408,14 @@ opts(Sync, Timeout) ->
         sync -> true;
         async -> false
     end,
-    HttpOpts = [{timeout, Timeout}],
+    %% See `httpc`'s
+    %% HttpOption :: {timeout, timeout()}
+    %%             | {connect_timeout, timeout()}
+    %%             | {ssl, [ssl:tls_option()]}
+    %%             | {autoredirect, boolean()}
+    %%             | {proxy_auth, {string(), string()}}
+    %%             | {version, HttpVersion} | {relaxed, boolean()}
+    HttpOpts = [{timeout, Timeout} | ?GET_ENV(httpc_options, [])],
     Opts = [{body_format, binary}, {sync, Sync2}],
     {Opts, HttpOpts}.
 
